@@ -21,7 +21,6 @@ APP_ID = '119914'
 TOKEN = 'xBPOeSK61N5Hm42'
 MIN_STAKE_DERIV = 1.0
 
-# Initialisation des fichiers de stockage temporaire pour l'interface
 STATUS_FILE = "bot_status.json"
 
 def initialiser_fichiers():
@@ -29,7 +28,7 @@ def initialiser_fichiers():
         with open(STATUS_FILE, "w") as f:
             json.dump({
                 "balance": 0.0, "active_trade": "Aucun", 
-                "logs": "🤖 Système initialisé. En attente de connexion...",
+                "logs": "🤖 Système initialisé. Cliquez sur 'DÉMARRER LE ROBOT' pour vous connecter...",
                 "morphology": "N/A"
             }, f)
 
@@ -84,33 +83,33 @@ async def fermer_contrat_au_marche(api, contract_id):
     except:
         return False
 
-# Moteur principal en tâche de fond
 async def moteur_trading_background():
+    # Double sécurité pour éviter d'écrire dans un fichier fermé
+    with open(STATUS_FILE, "w") as f:
+        json.dump({"balance": 0.0, "active_trade": "Connexion...", "morphology": "Analyse...", "logs": "🌐 Tentative de connexion aux serveurs Deriv en cours..."}, f)
+
     api = DerivAPI(app_id=APP_ID)
     try:
         await api.authorize(TOKEN)
         last_processed_epoch = 0
         active_contract = None
         temps_expiration = None
-        logs_list = ["🚀 Connexion établie avec succès sur les serveurs Deriv."]
+        logs_list = ["🚀 Connexion établie avec succès sur les serveurs Deriv ! Tracking M1 actif."]
 
         while True:
-            # Relecture des paramètres configurés sur l'interface graphique
             try:
                 with open("bot_config.json", "r") as f:
                     config = json.load(f)
             except:
                 config = {"risk": 0.30, "hold": 2, "multiplier": 400}
 
-            # Gestion de la fermeture du contrat (Chrono)
             if active_contract and datetime.now() >= temps_expiration:
                 succes = await fermer_contrat_au_marche(api, active_contract)
                 if succes:
-                    logs_list.append(f"⏰ [{datetime.now().strftime('%H:%M:%S')}] Échéance atteinte. Contrat clôturé avec succès.")
+                    logs_list.append(f"⏰ [{datetime.now().strftime('%H:%M:%S')}] Échéance atteinte. Contrat clôturé.")
                     active_contract = None
                     temps_expiration = None
 
-            # Collecte du flux M1
             try:
                 data = await api.ticks_history({'ticks_history': 'BOOM1000', 'count': 30, 'granularity': 60, 'style': 'candles', 'end': 'latest'})
                 if 'candles' in data:
@@ -129,24 +128,23 @@ async def moteur_trading_background():
                             mise = max(MIN_STAKE_DERIV, capital * config['risk'])
                             
                             if is_perfect:
-                                logs_list.append(f"🎯 [{time_str}] SPIKE PARFAIT DÉTECTÉ. Envoi de l'ordre...")
+                                logs_list.append(f"🎯 [{time_str}] SPIKE PARFAIT DETECTÉ. Envoi MULTDOWN...")
                                 cid = await executer_contrat_multdown(api, "BOOM1000", mise, config['multiplier'])
                                 if cid:
                                     active_contract = cid
                                     temps_expiration = datetime.now() + timedelta(minutes=config['hold'])
-                                    logs_list.append(f"💰 Position ouverte avec succès ! ID: {cid}")
+                                    logs_list.append(f"💰 Position ouverte ! ID: {cid}")
                         
                         last_processed_epoch = current_epoch
             except:
                 pass
 
-            # Mise à jour du statut pour l'affichage web
             solde_actuel = await recuperer_capital_reel(api) or 0.0
             statut_global = {
                 "balance": solde_actuel,
                 "active_trade": f"MULTDOWN actif (ID: {active_contract})" if active_contract else "Aucun",
-                "morphology": "Spike d'épuisement validé 🎯" if is_perfect else "Normal / Recherche...",
-                "logs": "\n".join(logs_list[-6:]) # Garder les 6 derniers logs
+                "morphology": "Spike d'épuisement validé 🎯" if ('is_perfect' in locals() and is_perfect) else "Normal / Recherche...",
+                "logs": "\n".join(logs_list[-6:])
             }
             with open(STATUS_FILE, "w") as f:
                 json.dump(statut_global, f)
@@ -166,7 +164,6 @@ st.markdown("Gestion automatisée par analyse anatomique des pics d'épuisement.
 
 # Panneau latéral de contrôle des risques
 st.sidebar.header("⚙️ Configuration Stratégique")
-st.sidebar.markdown("Ajustez vos paramètres en direct :")
 
 risk_pct = st.sidebar.slider("Compounding / Risque par trade (%)", 10, 50, 30, step=5)
 hold_min = st.sidebar.slider("Rétention en position (Minutes)", 1, 5, 2)
@@ -177,14 +174,25 @@ if st.sidebar.button("💾 Enregistrer les Modifications"):
         json.dump({"risk": risk_pct / 100, "hold": hold_min, "multiplier": multiplier_choice}, f)
     st.sidebar.success("Paramètres synchronisés !")
 
-# Bouton d'arrière plan pour démarrer la machine invisible
-if 'bot_loop_started' not in st.session_state:
-    st.session_state['bot_loop_started'] = True
-    try:
-        loop = asyncio.get_event_loop()
-        loop.create_task(moteur_trading_background())
-    except:
-        pass
+st.sidebar.markdown("---")
+
+# BOUTON INTERRUPTEUR CRITIQUE DE DÉMARRAGE
+if 'bot_running' not in st.session_state:
+    st.session_state['bot_running'] = False
+
+if not st.session_state['bot_running']:
+    if st.sidebar.button("🚀 DÉMARRER LE ROBOT", type="primary"):
+        st.session_state['bot_running'] = True
+        try:
+            loop = asyncio.get_event_loop()
+            loop.create_task(moteur_trading_background())
+            st.toast("Moteur de trading démarré !", icon="🔥")
+            time.sleep(1)
+            st.rerun()
+        except:
+            pass
+else:
+    st.sidebar.button("🤖 ROBOT EN LIGNE (ACTIF)", disabled=True)
 
 # Lecture des données calculées par le moteur de fond
 try:
@@ -208,5 +216,5 @@ st.markdown("---")
 st.subheader("📋 Journal d'activité du serveur (Logs)")
 st.code(data_web['logs'], language="text")
 
-# Rafraîchissement asynchrone natif toutes les 5 secondes (Évite les coupures)
+# Rafraîchissement asynchrone natif toutes les 5 secondes
 st.fragment(run_every=5)(lambda: None)()

@@ -4,6 +4,7 @@ import os
 import streamlit as st
 import pandas as pd
 import warnings
+import time
 from datetime import datetime, timedelta
 from deriv_api import DerivAPI
 
@@ -207,6 +208,5 @@ st.markdown("---")
 st.subheader("📋 Journal d'activité du serveur (Logs)")
 st.code(data_web['logs'], language="text")
 
-# Auto-refresh de la page toutes les 5 secondes pour mettre à jour l'affichage
-time.sleep(5)
-st.rerun()
+# Rafraîchissement asynchrone natif toutes les 5 secondes (Évite les coupures)
+st.fragment(run_every=5)(lambda: None)()
